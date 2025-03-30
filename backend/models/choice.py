@@ -6,5 +6,5 @@ from backend.models.base import Base
 class Choice(Base):
     id: int = Column(Integer, primary_key=True, index=True)
     name: str = Column(Text)
-    question_id: int = Column(Integer, ForeignKey("question.id"))
+    question_id: int = Column(Integer, ForeignKey("question.id", ondelete="CASCADE"))
     is_answer: bool = Column(Boolean)
