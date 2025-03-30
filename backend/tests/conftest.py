@@ -11,7 +11,7 @@ from backend.main import app
 from backend.models import Base
 from backend.schemas import UserCreate
 from backend.utils import security
-from backend.utils.deps import get_db
+from backend.utils.deps import get_db, get_redis_client
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -39,6 +39,22 @@ async def db():
             await db.close()
 
 
+@pytest_asyncio.fixture()
+async def redis_client():
+    redis = None
+    try:
+        redis = get_redis_client()
+
+        if redis:
+            await redis.flushdb()
+
+        async for redis in get_redis_client():
+            yield redis
+    finally:
+        if redis is not None:
+            await redis.close()
+
+
 @pytest_asyncio.fixture(scope="function")
 async def init(db):
     user_in = UserCreate(
@@ -59,11 +75,21 @@ async def init(db):
 
 
 @pytest_asyncio.fixture(scope="function")
-async def init_without_token(db):
-    data = {
-        "username": "user1@user1.com",
-        "password": "user1_password",
-        "phone_number": "+82 010-1111-1111",
-    }
-    async with AsyncClient(app=app, base_url="http://testserver") as client:
-        yield data, client
+async def init_with_superuser(db):
+    user_in = UserCreate(
+        username="user1@user1.com",
+        password="user1_password",
+        phone_number="+82 010-1111-1111",
+    )
+    user_obj = user_in.dict()
+    user_obj["is_superuser"] = True
+    user = await crud.user.create(db, obj_in=user_obj)
+    access_token = security.create_access_token(
+        user.id, expires_delta=timedelta(minutes=600)
+    )
+    async with AsyncClient(
+        app=app,
+        base_url="http://testserver",
+        headers={"Authorization": f"Bearer {access_token}"},
+    ) as client:
+        yield db, client
