@@ -1,165 +1,150 @@
-from collections.abc import Sequence
-import json
-from fastapi import APIRouter, Depends, status, HTTPException
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from loguru import logger
+from redis import Redis
 
 from backend import models, schemas, crud
+from backend.services.question import question_service
 from backend.services.quiz import quiz_service
-from backend.utils import deps, redis
+from backend.utils import deps
 
 router = APIRouter()
 
 
-@router.post("", response_model=schemas.QuizCreate, status_code=status.HTTP_201_CREATED)
-async def create_bulk_quiz(
-    quiz_in: schemas.QuizCreate,
-    # current_user: models.User = Depends(deps.get_current_active_superuser),
-    db: AsyncSession = Depends(deps.get_db),
-) -> schemas.QuizCreate:
-    return await quiz_service.create_bulk_quiz(quiz_in, db)
-
-
-# TODO
-@router.patch(
+@router.post(
     "",
-    response_model=schemas.QuizCreate,
-    description="When task is running, you can't update it. \
-        If you want to update it, you should stop it first.",
+    response_model=schemas.QuizUpdate,
+    status_code=status.HTTP_201_CREATED,
+    description="Create a new quiz",
 )
-async def update_bulk_quiz(
-    task_in: schemas.QuizCreate,
-    # current_user: models.User = Depends(deps.get_current_active_superuser),
+async def create_quiz(
+    quiz_in: schemas.QuizCreate,
+    _: models.User = Depends(deps.get_current_active_superuser),
     db: AsyncSession = Depends(deps.get_db),
-) -> schemas.QuizCreate:
-    return await quiz_service.update_task(task_in, db)
+) -> schemas.QuizUpdate:
+    return await quiz_service.create_quiz(quiz_in, db)
+
+
+@router.patch(
+    "/{quiz_id}",
+    response_model=schemas.QuizRead,
+    description="응시중인 사용자의 시험지에는 반영되지 않습니다.",
+)
+async def update_quiz(
+    quiz_id: int,
+    task_in: schemas.QuizBase,
+    _: models.User = Depends(deps.get_current_active_superuser),
+    db: AsyncSession = Depends(deps.get_db),
+) -> schemas.QuizRead:
+    return await quiz_service.update_quiz(quiz_id, task_in, db)
+
+
+@router.patch(
+    "/{question_id}/question",
+    response_model=schemas.QuestionUpdate,
+    description="응시중인 사용자의 시험지에는 반영되지 않습니다.",
+)
+async def update_question(
+    question_id: int,
+    task_in: schemas.QuestionUpdate,
+    _: models.User = Depends(deps.get_current_active_superuser),
+    db: AsyncSession = Depends(deps.get_db),
+) -> schemas.QuestionUpdate:
+    return await question_service.update_questions(task_in, db)
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_quiz(
-    task_id: int,
-    # current_user: models.User = Depends(deps.get_current_active_user),
+    quiz_id: int,
+    _: models.User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db),
 ) -> None:
-    return await quiz_service.delete_quiz(task_id, db)
+    return await quiz_service.delete_quiz(quiz_id, db)
 
 
 @router.get(
     "/{quiz_id}/detail",
-    response_model=schemas.QuizBase,
+    response_model=schemas.QuizUpdate,
     description="Get tasks by user_id or keyword. If both are None, return 400.",
 )
 async def get_quiz_detail(
     quiz_id: int,
-    page: int | None = None,
-    per_page: int | None = None,
+    page: int = 1,
     current_user: models.User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db),
-) -> Sequence[models.Quiz]:
+    redis_client: Redis = Depends(deps.get_redis_client),
+) -> schemas.QuizUpdate:
     if crud.user.is_superuser(current_user):
         return await quiz_service.get_questions_by_quiz_id(
-            quiz_id=quiz_id, current_user=current_user, db=db
+            quiz_id=quiz_id,
+            current_user=current_user,
+            db=db,
+            page=page,
+            redis_client=redis_client,
         )
     else:
         return await quiz_service.get_questions_by_quiz_id(
-            quiz_id=quiz_id, current_user=current_user, db=db
+            quiz_id=quiz_id,
+            current_user=current_user,
+            db=db,
+            page=page,
+            redis_client=redis_client,
         )
 
 
 @router.get(
     "/{quiz_id}/apply",
-    response_model=schemas.QuizCreate,
+    response_model=schemas.QuizRead,
     description="Get tasks by user_id or keyword. If both are None, return 400.",
 )
 async def apply_quiz(
     quiz_id: int,
     current_user: models.User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db),
-) -> Sequence[models.Quiz]:
-    quiz: models.Quiz | None = await crud.quiz.get(id=quiz_id, db=db)
-
-    if not quiz:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Quiz not found"
-        )
-
-    current_user.quizzes.append(quiz)
-    db.add(current_user)
-    await db.commit()
-    await db.refresh(current_user)
-
-    await quiz_service.set_questions_with_redis(
-        quiz, quiz.question, current_user.id, quiz_id
+    redis_client: Redis = Depends(deps.get_redis_client),
+) -> schemas.QuizRead:
+    return await quiz_service.apply_quiz(
+        quiz_id=quiz_id, current_user=current_user, db=db, redis_client=redis_client
     )
-
-    return schemas.QuizCreate(quizzes=current_user.quizzes)
 
 
 @router.post(
     "/{quiz_id}/select",
-    response_model=schemas.QuizBase,
+    status_code=status.HTTP_200_OK,
     description="Get tasks by user_id or keyword. If both are None, return 400.",
 )
 async def select_question_choice(
     quiz_id: int,
-    question_id: int,
-    choice_user: int,
+    question_idx: int,
+    choice: int,
     current_user: models.User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db),
+    redis_client: Redis = Depends(deps.get_redis_client),
 ):
-    key: str = f"user:{current_user.id},quiz_id:{quiz_id}"
-    questions: str | None = redis.redis_client.get(key)
-    if questions:
-        questions = json.loads(questions)
-        print("qqqq", questions)
-
-        for question in questions.get("question"):
-            if question.get("choice")[0].get("question_id") != question_id:
-                continue
-            question["choice_user"] = choice_user
-    print("현재 상태", questions)
-
-    redis.redis_client.set(key, json.dumps(questions))
-    redis.redis_client.expire(key, 60 * 60 * 24)  # 1day
-    return questions
+    return quiz_service.select_question_choice(
+        quiz_id=quiz_id,
+        question_idx=question_idx,
+        choice=choice,
+        current_user=current_user,
+        redis_client=redis_client,
+    )
 
 
 @router.post(
     "/{quiz_id}/submit",
-    response_model=schemas.QuizBase,
+    response_model=schemas.QuizSubmit,
     description="Get tasks by user_id or keyword. If both are None, return 400.",
 )
 async def submit_quiz(
     quiz_id: int,
     current_user: models.User = Depends(deps.get_current_active_user),
-    db: AsyncSession = Depends(deps.get_db),
-):
-    key: str = f"user:{current_user.id},quiz_id:{quiz_id}"
-    questions: str = redis.redis_client.get(key)
-    questions: list[dict] = json.loads(questions)
-    score: int = 0
-
-    for idx, question in enumerate(questions.get("question")):
-        user_choice = question.get("choice_user")
-
-        if user_choice is None:
-            print(f"{idx + 1} 번 문제를 선택하지 않았습니다.")
-            continue
-
-        choice = question.get("choice")[user_choice - 1]
-        if choice.get("is_answer"):
-            score += 1
-            print(f"{idx + 1} 번 문제에서 {user_choice} 을 골랐습니다.")
-            print("정답")
-        else:
-            print("오답")
-
-    print("score", score)
-    return questions
+    redis_client: Redis = Depends(deps.get_redis_client),
+) -> schemas.QuizSubmit:
+    return quiz_service.submit_quiz(quiz_id, current_user, redis_client)
 
 
 @router.get(
     "",
-    response_model=schemas.QuizCreate,
+    response_model=list[schemas.QuizRead],
     description="Get tasks by user_id or keyword. If both are None, return 400.",
 )
 async def get_quiz_handler(
@@ -167,10 +152,18 @@ async def get_quiz_handler(
     per_page: int = 10,
     current_user: models.User = Depends(deps.get_current_active_user),
     db: AsyncSession = Depends(deps.get_db),
-):
-    if crud.user.is_superuser(user=current_user):
-        quiz = await crud.quiz.get_list(db=db)
-        return schemas.QuizCreate(quizzes=quiz)
+) -> list[schemas.QuizRead]:
+    skip: int = (page - 1) * per_page
 
+    if crud.user.is_superuser(user=current_user):
+        quiz = await crud.quiz.get_list(db=db, skip=skip, limit=per_page)
     else:
-        return schemas.QuizCreate(quizzes=current_user.quizzes)
+        quiz = await crud.quiz.get_list_by_user_id(
+            db=db, user_id=current_user.id, skip=skip, limit=per_page
+        )
+
+    logger.debug(quiz)
+    return [
+        schemas.QuizRead(id=q.id, name=q.name, limit=q.limit, status=q.status)
+        for q in quiz
+    ]
