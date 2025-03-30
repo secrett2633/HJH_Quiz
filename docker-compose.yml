@@ -1,24 +1,49 @@
 version: '3.9'
 
 services:
-  redis:
-    image: redis:7-alpine
+  server:
+    build:
+      context: .
+    container_name: quiz-backend
+    environment:
+      - PIP_CACHE_DIR=${PIP_CACHE_DIR}
+      - POETRY_CACHE_DIR=${POETRY_CACHE_DIR}
+      - DATABASE_URI=postgresql+asyncpg://postgres:postgres@db/
+      - REDIS_URI=redis://redis
+      - ENV_STATE=dev
+    ports:
+      - "8000:8000"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        scripts/wait-for-it.sh redis:6379
+        scripts/wait-for-it.sh db:5432
+        poetry run alembic upgrade head
+        poetry run gunicorn
+    depends_on:
+      - db
     networks:
-    - quiz-backend-test-network
+      - quiz-backend-dev-network
+
+  redis:
+    image: redis
+    container_name: quiz-redis
+    networks:
+    - quiz-backend-dev-network
 
   db:
-    image: postgres:15-alpine
+    image: postgres
+    container_name: quiz-db
     environment:
-    - POSTGRES_USER=salmon
-    - POSTGRES_PASSWORD=2810
+    - POSTGRES_PASSWORD=postgres
     - POSTGRES_DB=dev_db
-    - POSTGRES_HOST_AUTH_METHOD=trust
     ports:
     - "5432:5432"
     networks:
-    - quiz-backend-test-network
+    - quiz-backend-dev-network
 
 networks:
-  quiz-backend-test-network:
-    name: quiz-backend-test-network
+  quiz-backend-dev-network:
+    name: quiz-backend-dev-network
     driver: bridge
