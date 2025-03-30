@@ -35,7 +35,9 @@ class CRUDBase(Generic[ModelType, CreateSchemaType, UpdateSchemaType]):
         result = await db.execute(select(self.model).offset(skip).limit(limit))
         return result.unique().scalars().all()
 
-    async def create(self, db: AsyncSession, *, obj_in: CreateSchemaType) -> ModelType:
+    async def create(
+        self, db: AsyncSession, *, obj_in: CreateSchemaType | dict
+    ) -> ModelType:
         if isinstance(obj_in, dict):
             obj_in_data = obj_in
         else:

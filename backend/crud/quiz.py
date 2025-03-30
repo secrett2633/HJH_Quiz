@@ -1,8 +1,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing_extensions import override
+from sqlalchemy.future import select
+from collections.abc import Sequence
 
 from backend.crud.base import CRUDBase
 from backend.models.quiz import Quiz
+from backend.models.user_quiz import user_quiz
 from backend.schemas.quiz import QuizCreate, QuizUpdate
 
 
@@ -23,6 +26,18 @@ class CRUDQuiz(CRUDBase[Quiz, QuizCreate, QuizUpdate]):
         await db.commit()
 
         return objs_in
+
+    async def get_list_by_user_id(
+        self, db: AsyncSession, user_id: int, skip: int = 0, limit: int = 100
+    ) -> Sequence[Quiz]:
+        result = await db.execute(
+            select(Quiz)
+            .join(user_quiz)
+            .filter(user_quiz.c.user_id == user_id)
+            .offset(skip)
+            .limit(limit)
+        )
+        return result.unique().scalars().all()
 
 
 quiz = CRUDQuiz(Quiz)

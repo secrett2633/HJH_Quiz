@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-
+from typing_extensions import override
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +9,14 @@ from backend.schemas.question import QuestionCreate, QuestionUpdate
 
 
 class CRUDQuestion(CRUDBase[Question, QuestionCreate, QuestionUpdate]):
+    @override
+    async def create(self, db: AsyncSession, *, obj_in: dict) -> Question:
+        obj_in.pop("choice", None)
+
+        question: Question = await super().create(db=db, obj_in=obj_in)
+
+        return question
+
     async def bulk_create(
         self, db: AsyncSession, *, objs_in: list[Question]
     ) -> list[Question]:
