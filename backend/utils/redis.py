@@ -1,6 +1,11 @@
 import redis
 
+from backend.core.config import settings
 
-redis_client = redis.Redis(
-    host="127.0.0.1", port=6379, db=0, encoding="UTF-8", decode_responses=True
-)
+
+async def setup_redis_client():
+    return redis.Redis(
+        host=settings.REDIS_HOST,
+        port=settings.REDIS_PORT,
+        decode_responses=True,
+    )

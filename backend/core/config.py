@@ -32,6 +32,8 @@ class Settings(BaseSettings):
 
     # Redis
     REDIS_URI: str = os.getenv("REDIS_URI", "redis://localhost:6379")
+    REDIS_HOST: str = os.getenv("REDIS_HOST", "localhost")
+    REDIS_PORT: int = os.getenv("REDIS_PORT", 6379)
 
     # Database
     ENV_STATE: str = os.getenv("ENV_STATE", "dev")

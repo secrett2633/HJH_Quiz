@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 
-from fastapi import Depends, HTTPException, status
+from redis.asyncio import Redis
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt
 from pydantic import ValidationError
@@ -34,7 +35,10 @@ async def get_current_user(
         )
     user = await crud.user.get(db, id=token_data.sub)
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
     return user
 
 
@@ -42,7 +46,9 @@ async def get_current_active_user(
     current_user: models.User = Depends(get_current_user),
 ) -> models.User:
     if not crud.user.is_active(current_user):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user"
+        )
     return current_user
 
 
@@ -50,5 +56,11 @@ async def get_current_active_superuser(
     current_user: models.User = Depends(get_current_user),
 ) -> models.User:
     if not crud.user.is_superuser(current_user):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Only superuser allowed"
+        )
     return current_user
+
+
+async def get_redis_client(request: Request) -> Redis:
+    return request.app.state.redis_client
