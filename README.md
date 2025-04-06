@@ -1,5 +1,5 @@
 # Quiz API
-
+```mermaid
 flowchart TD
     Clients["Client Applications"]:::client
 
@@ -78,8 +78,7 @@ flowchart TD
     classDef ext fill:#ffb3b3,stroke:#333,stroke-width:2px
     classDef core fill:#d3d3d3,stroke:#333,stroke-width:2px
     classDef infra fill:#e0e0e0,stroke:#333,stroke-width:2px
-
-
+```
 
 
 ## Requirements
@@ -141,4 +140,3 @@ http://localhost:8000/api/v1/docs
   ```
   PATCH /api/v1/users/{user_id}
   ```
-
